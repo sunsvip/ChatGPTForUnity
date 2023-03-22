@@ -165,7 +165,11 @@ namespace ChatGPT.Editor
                     {
                         EditorGUILayout.BeginHorizontal();
                         {
+#if UNITY_2021_1_OR_NEWER
                             if (EditorGUILayout.LinkButton("Get API Key:", GUILayout.Width(170)))
+#else
+                            if (GUILayout.Button("Get API Key:", GUILayout.Width(170)))
+#endif
                             {
                                 Application.OpenURL("https://platform.openai.com/account/api-keys");
                             }
