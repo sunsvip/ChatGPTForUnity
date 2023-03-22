@@ -68,7 +68,14 @@ namespace ChatGPT.Editor
 
         private void InitGUIStyles()
         {
-            aiChatStyle = new GUIStyle(EditorStyles.selectionRect);
+
+            aiChatStyle = new GUIStyle(
+#if UNITY_2021_1_OR_NEWER
+                EditorStyles.selectionRect
+#else
+                EditorStyles.textArea
+#endif
+                );
             aiChatStyle.wordWrap = true;
             aiChatStyle.normal.textColor = Color.white;
             aiChatStyle.fontSize = 18;
