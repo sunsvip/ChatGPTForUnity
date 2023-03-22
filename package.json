@@ -1,0 +1,28 @@
+{
+  "name": "com.sunsvip.chatgpt",
+  "displayName": "ChatGPT for Unity",
+  "version": "1.0.0",
+  "description": "A ChatGPT plugin for unity.",
+  "unity": "2021.3",
+  "dependencies": {
+    "com.unity.package": "1.0.0",
+    "com.unity.nuget.newtonsoft-json": "3.0.2",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  },
+  "keywords": [
+    "OpenAI",
+    "ChatGPT"
+  ],
+  "author": {
+    "name": "Eddie",
+    "email": "sunmmvip@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sunsvip/ChatGPTForUnity.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sunsvip/ChatGPTForUnity/issues"
+  }
+}
