@@ -5,7 +5,6 @@
   "description": "A ChatGPT plugin for unity.",
   "unity": "2021.3",
   "dependencies": {
-    "com.unity.package": "1.0.0",
     "com.unity.nuget.newtonsoft-json": "3.0.2",
     "com.unity.modules.unitywebrequest": "1.0.0"
   },
