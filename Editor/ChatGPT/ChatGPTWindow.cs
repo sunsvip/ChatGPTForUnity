@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 
@@ -118,8 +119,9 @@ namespace ChatGPT.Editor
                 scrollPos = EditorGUILayout.BeginScrollView(scrollPos);
                 {
                     scrollViewHeight = 0;
-                    foreach (var msg in ai.MessageHistory)
+                    for (int i = 0; i < ai.MessageHistory.Count; i++)
                     {
+                        var msg = ai.MessageHistory[i];
                         var msgRect = EditorGUILayout.BeginVertical();
                         {
                             EditorGUILayout.BeginHorizontal();
@@ -130,13 +132,51 @@ namespace ChatGPT.Editor
                                 float chatBoxWidth = this.position.width * chatBoxWidthRatio;
                                 float iconSize = Mathf.Min(iconMaxSize, (this.position.width - chatBoxWidth) * iconSizeRatio);
                                 float chatBoxHeight = Mathf.Max(iconSize, chatBoxEdgePadding + labelStyle.CalcHeight(chatContent, chatBoxWidth - chatBoxEdgePadding));
+                                ChatGPTCodeBlock[] codeBlocks = null;
                                 if (isMyMsg) { GUILayout.FlexibleSpace(); }
                                 else
                                 {
+                                    codeBlocks = ai.GetCodeBlocksByIdx(i);
+                                    if (codeBlocks != null)
+                                    {
+                                        chatBoxWidth -= 50;
+                                    }
                                     EditorGUILayout.LabelField(aiRoleName, aiIconStyle, GUILayout.Width(iconSize), GUILayout.Height(iconSize));
                                 }
+
                                 EditorGUILayout.SelectableLabel(msg.content, labelStyle, GUILayout.Width(chatBoxWidth), GUILayout.Height(chatBoxHeight));
-                                if (!isMyMsg) { GUILayout.FlexibleSpace(); }
+                                if (!isMyMsg)
+                                {
+                                    if (codeBlocks != null)
+                                    {
+                                        for (int blockIdx = 0; blockIdx < codeBlocks.Length; blockIdx++)
+                                        {
+                                            var cBlock = codeBlocks[blockIdx];
+                                            EditorGUILayout.BeginVertical("box");
+                                            {
+                                                if (GUILayout.Button($"Save {cBlock.FileExtension} File({blockIdx})"))
+                                                {
+                                                    var fileName = EditorUtility.SaveFilePanel("Save File", EditorPrefs.GetString("LAST_SELECT_PATH"), null, cBlock.FileExtension);
+                                                    if (!string.IsNullOrWhiteSpace(fileName))
+                                                    {
+                                                        try
+                                                        {
+                                                            System.IO.File.WriteAllText(fileName, cBlock.Content, System.Text.Encoding.UTF8);
+                                                            EditorPrefs.SetString("LAST_SELECT_PATH", Path.GetFullPath(fileName));
+                                                            AssetDatabase.Refresh();
+                                                        }
+                                                        catch (Exception e)
+                                                        {
+                                                            Debug.LogError($"Save {cBlock.FileExtension} file failed:{e.Message}");
+                                                        }
+                                                    }
+                                                }
+                                                EditorGUILayout.EndVertical();
+                                            }
+                                        }
+                                    }
+                                    GUILayout.FlexibleSpace();
+                                }
                                 else
                                 {
                                     EditorGUILayout.LabelField(msg.role, myIconStyle, GUILayout.Width(iconSize), GUILayout.Height(iconSize));
@@ -175,10 +215,10 @@ namespace ChatGPT.Editor
                             }
                             EditorGUI.BeginChangeCheck();
                             {
-                                myApiKey = EditorGUILayout.TextField(myApiKey);
+                                myApiKey = EditorGUILayout.PasswordField(myApiKey);
                                 if (EditorGUI.EndChangeCheck())
                                 {
-                                    ai.SetAIPKey(myApiKey);
+                                    ai.SetAPIKey(myApiKey);
                                 }
                             }
                             EditorGUILayout.EndHorizontal();
@@ -190,7 +230,14 @@ namespace ChatGPT.Editor
                             ai.ChatGPTRandomness = EditorGUILayout.Slider(ai.ChatGPTRandomness, 0, 2);
                             EditorGUILayout.EndHorizontal();
                         }
+                        EditorGUILayout.BeginHorizontal();
+                        {
+                            EditorGUILayout.LabelField("WebRequest Timeout:", GUILayout.Width(170));
+                            ai.RequestTimeout = EditorGUILayout.IntSlider(ai.RequestTimeout, 30, 120);
+                            EditorGUILayout.EndHorizontal();
+                        }
                         EditorGUILayout.EndVertical();
+
                     }
 
                 }

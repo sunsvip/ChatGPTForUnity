@@ -1,9 +1,11 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Unity.EditorCoroutines.Editor;
+using TMPro.EditorUtilities;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -12,30 +14,50 @@ namespace ChatGPT.Editor
 {
     public class ChatGPT
     {
+        private static readonly Dictionary<string, string> SupportCodeLanguages = new Dictionary<string, string>
+        {
+            ["python"] = "py",
+            ["csharp"] = "cs",
+            ["json"] = "json",
+            ["cpp"] = "cpp",
+            ["c++"] = "cpp",
+            ["java"] = "java",
+            ["javascript"] = "js",
+            ["html"] = "html",
+            ["css"] = "css",
+            ["xml"] = "xml",
+            ["markdown"] = "md",
+            ["typescript"] = "ts"
+        };
         const string ChatgptUrl = "https://api.openai.com/v1/chat/completions";
-        const string DefaultAPIKey = "Your ChatGPT API key";
         const string DefaultModel = "gpt-3.5-turbo";
         const float DefaultTemperature = 0;
         const string DefaultUserId = "user";
-        string ApiKey;
+        string ApiKey = "your chatgpt api key";
         string UserId;
-        List<Message> messageHistory;
-        public List<Message> MessageHistory => messageHistory;
+        List<ChatGPTMessage> messageHistory;
+
+        Dictionary<int, ChatGPTCodeBlock[]> codeBlocksDic;
+        public List<ChatGPTMessage> MessageHistory => messageHistory;
         ChatGPTRequestData requestData;
         UnityWebRequest webRequest;
+
+        int mRequestTimeout = 60;
+        public int RequestTimeout { get => mRequestTimeout; set => mRequestTimeout = Mathf.Max(value, 30); }
         public float ChatGPTRandomness { get => requestData.temperature; set { requestData.temperature = Mathf.Clamp(value, 0, 2); } }
         public bool IsRequesting => webRequest != null && !webRequest.isDone;
         public float RequestProgress => IsRequesting ? (webRequest.uploadProgress + webRequest.downloadProgress) / 2f : 0f;
-        public ChatGPT(string apiKey = DefaultAPIKey, string userId = DefaultUserId, string model = DefaultModel, float temperature = DefaultTemperature)
+        public ChatGPT(string apiKey, string userId = DefaultUserId, string model = DefaultModel, float temperature = DefaultTemperature)
         {
-            this.ApiKey = string.IsNullOrWhiteSpace(apiKey) ? DefaultAPIKey : apiKey;
+            this.ApiKey = apiKey;
             this.UserId = string.IsNullOrWhiteSpace(userId) ? DefaultUserId : userId;
-            messageHistory = new List<Message>();
+            messageHistory = new List<ChatGPTMessage>();
             requestData = new ChatGPTRequestData(model, temperature);
+            codeBlocksDic = new Dictionary<int, ChatGPTCodeBlock[]>();
         }
-        public void SetAIPKey(string key)
+        public void SetAPIKey(string str)
         {
-            this.ApiKey = key;
+            this.ApiKey = str;
         }
         /// <summary>
         /// 接着上次的话题
@@ -44,33 +66,109 @@ namespace ChatGPT.Editor
         {
             var chatHistoryJson = EditorPrefs.GetString("ChatGPT.Settings.ChatHistory", string.Empty);
             var requestDataJson = EditorPrefs.GetString("ChatGPT.Settings.RequestData", string.Empty);
-            if (!string.IsNullOrEmpty(chatHistoryJson))
+            if (!string.IsNullOrEmpty(requestDataJson))
             {
-                var jsonObj = Newtonsoft.Json.JsonConvert.DeserializeObject<ChatGPTRequestData>(requestDataJson);
+                var jsonObj = JsonConvert.DeserializeObject<ChatGPTRequestData>(requestDataJson);
                 if (jsonObj != null)
                 {
                     requestData.messages = jsonObj.messages;
                 }
             }
-            if (!string.IsNullOrEmpty(requestDataJson))
+            if (!string.IsNullOrEmpty(chatHistoryJson))
             {
-                var jsonObj = Newtonsoft.Json.JsonConvert.DeserializeObject<List<Message>>(chatHistoryJson);
+                var jsonObj = JsonConvert.DeserializeObject<List<ChatGPTMessage>>(chatHistoryJson);
                 if (jsonObj != null)
                 {
                     messageHistory = jsonObj;
+                    ParseAllMessageCodeBlocks(messageHistory);
                 }
             }
         }
+
+        private void ParseAllMessageCodeBlocks(List<ChatGPTMessage> messageHistory, bool forceAll = false)
+        {
+            if (messageHistory == null || messageHistory.Count < 1)
+            {
+                return;
+            }
+            if (forceAll)
+            {
+                codeBlocksDic.Clear();
+                for (int i = 0; i < messageHistory.Count; i++)
+                {
+                    var msg = messageHistory[i];
+                    if (IsSelfMessage(msg)) continue;
+
+                    var codeBlocks = ParseCodeBlocks(msg.content);
+                    if (codeBlocks != null)
+                    {
+                        codeBlocksDic.Add(i, codeBlocks);
+                    }
+                }
+            }
+            else
+            {
+                for (int i = 0; i < messageHistory.Count; i++)
+                {
+                    var msg = messageHistory[i];
+                    if (IsSelfMessage(msg)) continue;
+                    if (codeBlocksDic.ContainsKey(i)) continue;
+
+                    var codeBlocks = ParseCodeBlocks(msg.content);
+                    if (codeBlocks != null)
+                    {
+                        codeBlocksDic.Add(i, codeBlocks);
+                    }
+                }
+            }
+        }
+        private ChatGPTCodeBlock[] ParseCodeBlocks(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return null;
+            }
+
+            Regex regex = new Regex(@"```(?<language>[^\n]+)?\n(?<code>.*?)\n```", RegexOptions.Singleline);
+            MatchCollection matches = regex.Matches(message);
+            List<ChatGPTCodeBlock> codeBlocks = new List<ChatGPTCodeBlock>();
+            foreach (Match match in matches)
+            {
+                string codeBlock = match.Groups["code"].Value;
+                string codeTag = match.Groups["language"].Value.ToLower();
+                if (!SupportCodeLanguages.ContainsKey(codeTag))
+                {
+                    continue;
+                }
+                if (!string.IsNullOrWhiteSpace(codeBlock) && !string.IsNullOrWhiteSpace(codeTag))
+                {
+                    var cBlock = new ChatGPTCodeBlock()
+                    {
+                        Tag = codeTag,
+                        Content = codeBlock,
+                        FileExtension = SupportCodeLanguages[codeTag]
+                    };
+                    codeBlocks.Add(cBlock);
+                }
+            }
+            return codeBlocks.Count > 0 ? codeBlocks.ToArray() : null;
+        }
         public void SaveChatHistory()
         {
-            var chatHistoryJson = Newtonsoft.Json.JsonConvert.SerializeObject(messageHistory);
-            var requestDataJson = Newtonsoft.Json.JsonConvert.SerializeObject(requestData);
-            EditorPrefs.SetString("ChatGPT.Settings.ChatHistory", chatHistoryJson);
-            EditorPrefs.SetString("ChatGPT.Settings.RequestData", requestDataJson);
+            if (messageHistory != null && messageHistory.Count > 0)
+            {
+                var chatHistoryJson = JsonConvert.SerializeObject(messageHistory);
+                EditorPrefs.SetString("ChatGPT.Settings.ChatHistory", chatHistoryJson);
+            }
+            if (requestData != null)
+            {
+                var requestDataJson = JsonConvert.SerializeObject(requestData);
+                EditorPrefs.SetString("ChatGPT.Settings.RequestData", requestDataJson);
+            }
         }
         public void Send(string message, Action<bool, string> onComplete = null, Action<float> onProgressUpdate = null)
         {
-            EditorCoroutineUtility.StartCoroutine(Request(message, onComplete, onProgressUpdate), this);
+            TMP_EditorCoroutine.StartCoroutine(Request(message, onComplete, onProgressUpdate));
         }
 
         public async Task<string> SendAsync(string message)
@@ -83,7 +181,7 @@ namespace ChatGPT.Editor
                 if (success) result = str;
             };
 
-            EditorCoroutineUtility.StartCoroutine(Request(message, onComplete, null), this);
+            TMP_EditorCoroutine.StartCoroutine(Request(message, onComplete, null));
             while (!isCompleted)
             {
                 await Task.Delay(10);
@@ -92,7 +190,7 @@ namespace ChatGPT.Editor
         }
         private IEnumerator Request(string input, Action<bool, string> onComplete, Action<float> onProgressUpdate)
         {
-            var msg = new Message()
+            var msg = new ChatGPTMessage()
             {
                 role = UserId,
                 content = input,
@@ -102,14 +200,15 @@ namespace ChatGPT.Editor
 
             using (webRequest = new UnityWebRequest(ChatgptUrl, "POST"))
             {
-                var jsonDt = Newtonsoft.Json.JsonConvert.SerializeObject(requestData);
+                var jsonDt = JsonConvert.SerializeObject(requestData);
                 Debug.Log(jsonDt);
                 byte[] bodyRaw = Encoding.UTF8.GetBytes(jsonDt);
                 webRequest.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 webRequest.downloadHandler = new DownloadHandlerBuffer();
                 webRequest.SetRequestHeader("Content-Type", "application/json");
                 webRequest.SetRequestHeader("Authorization", $"Bearer {this.ApiKey}");
-                webRequest.certificateHandler = new ChatGPTWebRequestCert();
+                webRequest.certificateHandler = new WebRequestCertNoValidate();
+                webRequest.timeout = RequestTimeout;
                 var req = webRequest.SendWebRequest();
                 while (!webRequest.isDone)
                 {
@@ -128,11 +227,16 @@ namespace ChatGPT.Editor
                     Debug.Log(json);
                     try
                     {
-                        ChatCompletion result = Newtonsoft.Json.JsonConvert.DeserializeObject<ChatCompletion>(json);
+                        ChatCompletion result = JsonConvert.DeserializeObject<ChatCompletion>(json);
                         int lastChoiceIdx = result.choices.Count - 1;
                         var replyMsg = result.choices[lastChoiceIdx].message;
                         replyMsg.content = replyMsg.content.Trim();
                         messageHistory.Add(replyMsg);
+                        var codeBlock = ParseCodeBlocks(replyMsg.content);
+                        if (codeBlock != null)
+                        {
+                            codeBlocksDic.Add(messageHistory.Count - 1, codeBlock);
+                        }
                         onComplete?.Invoke(true, replyMsg.content);
                     }
                     catch (System.Exception e)
@@ -145,12 +249,18 @@ namespace ChatGPT.Editor
                 webRequest = null;
             }
         }
+        public ChatGPTCodeBlock[] GetCodeBlocksByIdx(int msgIdx)
+        {
+            if (codeBlocksDic.TryGetValue(msgIdx, out var codeBlocks)) return codeBlocks;
+            return null;
+        }
         public void NewChat()
         {
             requestData.ClearChat();
             messageHistory.Clear();
+            codeBlocksDic.Clear();
         }
-        public bool IsSelfMessage(Message msg)
+        public bool IsSelfMessage(ChatGPTMessage msg)
         {
             return this.UserId.CompareTo(msg.role) == 0;
         }
@@ -158,7 +268,7 @@ namespace ChatGPT.Editor
 
     class ChatGPTRequestData
     {
-        public List<Message> messages;
+        public List<ChatGPTMessage> messages;
         public string model;
         public float temperature;
 
@@ -166,7 +276,7 @@ namespace ChatGPT.Editor
         {
             this.model = model;
             this.temperature = temper;
-            this.messages = new List<Message>();
+            this.messages = new List<ChatGPTMessage>();
         }
 
         /// <summary>
@@ -174,7 +284,7 @@ namespace ChatGPT.Editor
         /// </summary>
         /// <param name="chatMsg"></param>
         /// <returns></returns>
-        public ChatGPTRequestData AppendChat(Message msg)
+        public ChatGPTRequestData AppendChat(ChatGPTMessage msg)
         {
             this.messages.Add(msg);
             return this;
@@ -187,23 +297,21 @@ namespace ChatGPT.Editor
             this.messages.Clear();
         }
     }
-
-    class ChatGPTWebRequestCert : UnityEngine.Networking.CertificateHandler
+    public class ChatGPTCodeBlock
     {
-        protected override bool ValidateCertificate(byte[] certificateData)
-        {
-            //return base.ValidateCertificate(certificateData);
-            return true;
-        }
+        public string Tag;
+        public string Content;
+
+        public string FileExtension;
     }
-    class Usage
+    class ChatGPTUsage
     {
         public int prompt_tokens;
         public int completion_tokens;
         public int total_tokens;
     }
 
-    public class Message
+    public class ChatGPTMessage
     {
         public string role;
         public string content;
@@ -211,7 +319,7 @@ namespace ChatGPT.Editor
 
     class Choice
     {
-        public Message message;
+        public ChatGPTMessage message;
         public string finish_reason;
         public int index;
     }
@@ -222,8 +330,25 @@ namespace ChatGPT.Editor
         public string @object;
         public int created;
         public string model;
-        public Usage usage;
+        public ChatGPTUsage usage;
         public List<Choice> choices;
     }
+
+
+    class WebRequestCertNoValidate : UnityEngine.Networking.CertificateHandler
+    {
+        protected override bool ValidateCertificate(byte[] certificateData)
+        {
+            //bool validation = base.ValidateCertificate(certificateData);
+
+            //if (!validation)
+            //{
+            //    X509Certificate2 certificate = new X509Certificate2(certificateData);
+            //    // Do custom validation that puts it's result into the validation boolean.
+            //}
+            return true;
+        }
+    }
+
 }
 
